@@ -1,0 +1,339 @@
+---
+title: "MODELO_FINAL_INTERPRET"
+author: "Daniel"
+date: "2023-05-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F)
+```
+
+```{r}
+library(caret)
+library(dplyr)
+library(mltools)
+library(data.table)
+library(smotefamily) #para ADASYN
+library(randomForest)
+library(xgboost) #adaboost
+library(h2o)
+```
+
+Cargamos datos y separamos en X e y
+```{r}
+datos <- read.csv('archivo.csv') #cargo datos
+```
+
+Factorizamos las variables necesarias
+```{r}
+datos$main_category <- as.factor(datos$main_category)
+datos$subcategory <- as.factor(datos$subcategory)
+datos$loc_state <- as.factor(datos$loc_state)
+datos$loc_name <- as.factor(datos$loc_name)
+datos$state <- as.factor(datos$state)
+datos <- datos %>%
+  filter(
+    main_category != "" &
+    goal != "" &
+    state != "" &
+    face.like != "" &
+    face_followers != "" &
+    youtube_videos != "" &
+    youtube_subscriptors != "" &
+    youtube_views != "" &
+    instagram_followers != "" &
+    twitter_followers != "" &
+    PCE != "" &
+    dif_launch_end != "" &
+    dif_create_end != "" &
+    dif_create_launch != "" &
+    loc_state != "" &
+    loc_name != "" &
+    subcategory != ""
+  )
+summary(datos)
+```
+```{r}
+X_mal <- datos %>% select(-state)
+y <- datos %>% select(state)
+y_binario <- ifelse(y == "successful", 1, 0)
+```
+
+```{r}
+X <- one_hot(as.data.table(X_mal))
+colnames(X) <- make.names(colnames(X))
+```
+
+```{r}
+df_unido <- cbind(X,y_binario)
+```
+
+Dividimos en train y test
+```{r}
+indice <- createDataPartition(y = y_binario, p = 0.8, list = FALSE)
+X_train <- X[indice, ]  # Conjunto de entrenamiento
+X_test <- X[-indice, ]  # Conjunto de prueba
+y_train <- y_binario[indice, ]  # Conjunto de entrenamiento
+y_test <- y_binario[-indice, ]  # Conjunto de prueba
+```
+
+```{r}
+train_over <- ADAS(X_train, y_train, K= 5)
+train_over <- train_over$data
+X_train <- train_over %>% select(-class)
+y_train <- train_over$class
+```
+
+```{r}
+cv = data.matrix(X_train)
+grid <- expand.grid(nrounds = c(100, 200, 300),
+                    max_depth = c(3, 6, 9),
+                    eta = c(0.01, 0.1, 0.3))
+control <- trainControl(method = "cv", number = 5)
+```
+
+```{r}
+xgb <- xgboost(data = cv, 
+ label = y_train, 
+ eta = 0.1,
+ max_depth = 15, 
+ nround=100, 
+ subsample = 0.5,
+ colsample_bytree = 0.5,
+)
+```
+```{r}
+xtest <- data.matrix(X_test)
+#_test_matrix <- as.matrix()
+y_pred <- predict(xgb, xtest)
+y_pred <- ifelse(y_pred>=0.5, 1, 0)
+cm <- confusionMatrix(as.factor(y_pred), as.factor(y_test), mode = 'everything')
+cm
+```
+```{r}
+# Instala y carga las bibliotecas necesarias
+
+
+# Carga tus datos
+
+# Define los posibles valores de los hiperparámetros a buscar
+param_grid <- list(
+  eta = c(0.01, 0.1, 0.3),
+  max_depth = c(3, 6, 9),
+  nrounds = c(100, 200, 300)
+)
+
+# Inicializa una lista para almacenar los resultados
+resultados <- list()
+
+# Realiza la búsqueda exhaustiva de hiperparámetros
+for (eta in param_grid$eta) {
+  for (max_depth in param_grid$max_depth) {
+    for (nrounds in param_grid$nrounds) {
+      params <- list(
+        objective = "binary:logistic",
+        eta = eta,
+        max_depth = max_depth,
+        nrounds = nrounds
+      )
+      cv_result <- xgb.cv(data = cv, label = y_train, eta = eta, max_depth=max_depth, nrounds=nrounds,nfold = 5, verbose = 1)
+      resultados[[paste0("eta", eta, "_max_depth", max_depth, "_nrounds", nrounds)]] <- cv_result$evaluation_log$test_rmse_mean
+    }
+  }
+}
+
+# Encuentra los mejores hiperparámetros basados en la métrica de evaluación
+mejor_resultado <- min(unlist(resultados))
+mejores_hiperparametros <- names(resultados)[unlist(resultados) == mejor_resultado]
+
+# Muestra los resultados
+print(resultados)
+print(paste0("Mejor resultado: ", mejor_resultado))
+print(paste0("Mejores hiperparámetros: ", mejores_hiperparametros))
+
+```
+
+```{r}
+j = 0
+i = 0
+mean = 1000
+for (lista in resultados){
+  i = i+1
+  if (lista[length(lista)] < mean) {
+    mean = lista[length(lista)]
+    j = i
+  }
+}
+```
+
+
+```{r}
+xgb <- xgboost(data = cv, 
+ label = y_train, 
+ eta = 0.1,
+ max_depth = 9,
+ objective = "binary:logistic",
+ nround=200,
+ verbose = 0)
+xtest <- data.matrix(X_test)
+#_test_matrix <- as.matrix()
+y_prob <- predict(xgb, xtest)
+y_pred <- ifelse(y_prob>=0.5, 1, 0)
+cm <- confusionMatrix(as.factor(y_pred), as.factor(y_test), mode = 'everything')
+cm
+```
+MODELO ELEGIDO : XGBOOST
+
+CALIBRACIóN
+```{r}
+library(gbm)
+pl <- calibrate.plot(y = y_test, y_prob)
+```
+
+
+
+
+INTERPRETACION
+```{r}
+pred <- function(model, newdata)  {
+  new_data_matrix <- xgb.DMatrix(data.matrix(newdata), missing = NA)
+  results <- as.vector(predict(model,new_data_matrix))
+  return(results)
+}
+```
+
+
+```{r}
+library(iml)
+predictor <- Predictor$new(
+  model = xgb, 
+  data = X, 
+  y = y, 
+  predict.fun = pred,
+  class = "classification"
+  )
+```
+
+
+```{r}
+library(plotly)
+# Obtener la importancia de las variables
+importance <- xgb.importance(model = xgb)
+importance_ord <- importance %>% arrange(desc(Gain))
+# Graficar la importancia de las variables
+p1 <- plot_ly()
+
+# Añadir la barra de importancia de las variables
+p1 <- add_trace(
+  p1,
+  x = importance_ord$Gain,
+  y = importance$Feature,
+  type = "bar",
+  marker = list(color = "#1f77b4")
+)
+
+# Establecer el título y etiquetas de los ejes
+p1 <- layout(
+  p1,
+  title = "Importancia de las variables en el modelo XGBoost",
+  xaxis = list(title = "Variable"),
+  yaxis = list(title = "Importancia")
+)
+p1
+```
+
+
+```{r}
+imp <- FeatureImp$new(predictor, loss = "ce")
+library("ggplot2")
+plot(imp)
+```
+
+
+
+
+```{r}
+pdp.goal <- FeatureEffect$new(predictor, "main_category_Design", grid.size = 50)
+plot(pdp.goal)
+```
+
+```{r}
+pdp.goal <- FeatureEffect$new(predictor, "goal", grid.size = 50)
+plot(pdp.goal) + ggtitle("PDP") + coord_cartesian(xlim = c(0,13000))
+```
+```{r}
+twitter <- FeatureEffect$new(predictor, "twitter_followers", grid.size = 50)
+plot(twitter) + ggtitle("PDP") + coord_cartesian(xlim = c(0,10000))
+```
+```{r}
+pce <- FeatureEffect$new(predictor,'PCE')
+plot(pce)
+```
+```{r}
+ins <- FeatureEffect$new(predictor,'instagram_followers')
+plot(ins) + ggtitle("INSTAGRAM FOLLOWERS") + coord_cartesian(xlim = c(0,10000))
+```
+##Lime
+
+```{r}
+library(lime)
+library(MASS)
+library(caret)
+```
+
+```{r}
+explainer <- lime(X_train, xgb, feature_names= c('goal','twitter_followers'))
+```
+
+```{r}
+explanation <- explain(X_test[422, ], explainer, n_labels = 1, n_features = 10)
+```
+
+```{r}
+explanation <- explanation %>%filter(feature %in% c('twitter_followers','goal','PCE','dif_create_launch', 'dif_launc_end'))
+```
+
+```{r}
+plot_features(explanation)
+```
+```{r}
+# Predice bien la clase negativa (0,0)
+
+explainer <- lime(X_train, xgb, feature_names= c('goal','twitter_followers'))
+
+explanation <- explain(X_test[399, ], explainer, n_labels = 1, n_features = 742)
+
+explanation <- explanation %>%filter(feature %in% c('twitter_followers','goal','PCE','dif_create_launch', 'dif_launc_end'))
+
+plot_features(explanation)
+
+```
+```{r}
+# Predice bien la clase negativa (1,0)
+
+explainer <- lime(X_train, xgb, feature_names= c('goal','twitter_followers'))
+
+explanation <- explain(X_test[202, ], explainer, n_labels = 1, n_features = 742)
+
+explanation <- explanation %>%filter(feature %in% c('twitter_followers','goal','PCE','dif_create_launch', 'dif_launc_end'))
+
+plot_features(explanation)
+
+```
+```{r}
+library(ggplot2)
+
+# Crear el gráfico
+ggplot(datos, aes(x = twitter_followers)) +
+  geom_bar() +  # Barplot
+  labs(x = "Variable", y = "Frecuencia")  # Etiquetas de los ejes
+
+```
+```{r}
+seguidores = X_test %>% select("twitter_followers")
+seguidores
+```
+
+
+

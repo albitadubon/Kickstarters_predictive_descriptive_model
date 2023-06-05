@@ -1,0 +1,176 @@
+---
+title: "EXPLORACIÓN DE LA BASE DE DATOS"
+author: "Alba"
+date: '2023-03-24'
+output: html_document
+---
+
+# relacion enmtre lo que piden y lo que dan
+# media de lo que piden por catogoria
+# media de lo que dan por actegoria
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(plotly)
+library(lubridate)
+```
+
+
+
+```{r cars}
+setwd('/Users/albitadubonllamas/Desktop/proyecto')
+datos=read.csv('definitivo.csv')
+```
+
+
+
+```{r pressure, echo=FALSE}
+head(datos)
+```
+
+
+```{r}
+#Estructura de los datos
+#str(datos)
+```
+
+
+```{r}
+datos$main_category <- factor(datos$main_category)
+datos$subcategory <- factor(datos$subcategory)
+frecuencias <- table(datos$main_category, datos$subcategory)
+```
+
+
+
+
+# Categorías
+
+```{r}
+df_frecuencias <- as.data.frame(frecuencias)
+df_frecuencias$main_category <- rownames(df_frecuencias)
+
+p=ggplot(datos, aes(x=main_category)) + geom_bar(aes(x=main_category, y=..count.., fill = factor(subcategory)))
+
+library(plotly)
+ggplotly(p)
+p
+```
+
+
+### State 
+
+```{r}
+df_frecuencias <- as.data.frame(frecuencias)
+df_frecuencias$main_category <- rownames(df_frecuencias)
+
+p=ggplot(datos, aes(x=main_category)) + geom_bar(aes(x=main_category, y=..count.., fill = factor(state)))
+ggplotly(p)
+
+```
+
+
+```{r}
+table(datos$state)/nrow(datos)*100
+```
+
+
+#### Porcentaje de éxito por categoría
+
+```{r}
+library(dplyr)
+successful_projects <- datos %>% filter(state == "successful")
+by_category <- datos %>% group_by(main_category)
+project_counts <- by_category %>% summarize(total = n(), successful = sum(state == "successful"))
+
+project_counts <- project_counts %>% mutate(successful_percent = successful / total * 100)
+```
+
+
+
+
+```{r}
+# Crear un vector con los porcentajes de proyectos exitosos para cada categoría
+percentages <- project_counts$successful_percent
+#sorted_categories <- project_counts$main_category[order(project_counts$successful_percent)]
+
+# Graficar los porcentajes de proyectos exitosos por categoría
+barplot(percentages, names.arg = project_counts$main_category, 
+        main = "Porcentaje de exito por categoría", cex.names = 0.6, col='lightblue', border='lightblue')
+
+```
+
+
+```{r}
+datos$state <- factor(datos$state)
+barplot(table(datos$state), col='lightblue', border='lightblue', main = "Estados royectos kickstarter")
+
+```
+
+# Inversiones y número de inversores
+
+
+```{r}
+summary(datos$backers_count) # numero patrocinadores 
+summary(datos$converted_pledged_amount) # dinero recaudado ($)
+summary(datos$usd_pledged) # dinero recaudado 
+```
+
+
+
+```{r}
+p <- ggplot(datos, aes(x=backers_count, y=converted_pledged_amount, color=main_category)) + 
+  geom_point() +
+  scale_color_discrete(name="Categoría")
+
+p + ggtitle("")
+```
+
+
+
+```{r}
+library(ggplot2)
+
+# Filtrar los datos sin los valores extremos
+datos_filtrados <- datos %>% 
+  filter(backers_count > quantile(backers_count, 0.01) & backers_count < quantile(backers_count, 0.99))
+
+# Crear el gráfico por categoría
+ggplot(datos_filtrados, aes(x=backers_count, y=converted_pledged_amount, color=main_category)) + 
+  geom_point() +
+  scale_color_discrete(name = "Categoría principal") +
+  labs(x = "Cantidad de patrocinadores", y = "Monto recaudado") +
+  scale_x_continuous(labels = function(x) as.character(x)) +
+  ggtitle("Relación entre la cantidad de patrocinadores y el monto recaudado por categoría") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", size=0.3))
+
+```
+
+-------------------------------------------------------------------------------------
+
+
+```{r}
+df <- datos %>%
+  mutate(launched_at = ymd_hms(launched_at)) %>%
+  group_by(main_category, year = year(launched_at)) %>%
+  summarise(count = n()) %>%
+  ungroup()
+
+ggplot(df, aes(x = year, y = count, color = main_category)) +
+  geom_line() +
+  labs(x = "Año", y = "Cantidad de proyectos", color = "Categoría principal") +
+  scale_x_continuous(labels = function(x) as.character(x)) +
+  ggtitle("Proyectos lanzados por categoría por años") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+```
+
+
+
+
+
+
+
